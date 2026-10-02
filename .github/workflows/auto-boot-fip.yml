@@ -74,20 +74,17 @@ jobs:
           echo "=== 校验布局改动（默认值应为 default=64m 布局）==="
           grep -n 'layout_label = "' "$LAYOUT_C"
 
-          # ★★★ 最关键：直接给 build.sh 打补丁 ★★★
-          # build.sh:75 `cp -f configs/$UBOOT_CFG .config` 会覆盖外部注入；
-          # build.sh:81 `make olddefconfig` 又因 Kconfig 循环（MULTI_MTD_LAYOUT → select
-          # SYS_MTDPARTS_RUNTIME → depends on MTD）把 CONFIG_MTD 判成 n。
-          # 症状：mtdcore.o/mtd_uboot.o/mtdpart.o 不编译 → 链接时几十个 mtd_* undefined + ld 段错误(139)
-          # 对策：在 build.sh 的 olddefconfig 之后、make all 之前，强制把 CONFIG_MTD 写进 .config
           # ★★★ 关键：给 build.sh 打补丁，强制启用 MTD 核心 ★★★
           # build.sh:75 `cp -f configs/$UBOOT_CFG .config` 覆盖外部注入；
           # build.sh:81 `make olddefconfig` 因 Kconfig 循环（MULTI_MTD_LAYOUT → select
           # SYS_MTDPARTS_RUNTIME → depends on MTD）把 CONFIG_MTD 判成 n。
           # 症状：mtdcore.o/mtd_uboot.o 不编译 → 链接时几十个 mtd_* undefined + ld 段错误(139)
           # 补丁脚本独立成文件（YAML 内嵌 heredoc 缩进极易出错），本地已 sh -n 校验通过。
-          cp -f .github/patch_build_sh.py ./patch_build_sh.py
+          # ⚠️ 注意：当前工作目录已是 src/，patch 脚本在仓库根的 .github/ 下，必须用绝对路径。
+          cp -f "$GITHUB_WORKSPACE/.github/patch_build_sh.py" ./patch_build_sh.py
+          test -f ./patch_build_sh.py || { echo "ERROR: patch_build_sh.py 未找到（GITHUB_WORKSPACE=$GITHUB_WORKSPACE）"; exit 1; }
           python3 ./patch_build_sh.py
+          sh -n build.sh && echo "build.sh 语法校验通过"
           echo "=== build.sh MTD 注入补丁已应用（确认）==="
           grep -n -A6 "force MTD core" build.sh
           sh -n build.sh && echo "build.sh 语法校验通过"
@@ -156,12 +153,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp src/build_full.log "build_fail_${GITHUB_RUN_ID}.log" 2>/dev/null || true
-          tail -n 3000 src/build_full.log > build_fail_latest.log
+          # 失败可能发生在编译之前（此时 build_full.log 不存在），必须容错，否则本步骤自身也失败、日志永远传不上来
+          if [ -f src/build_full.log ]; then
+            tail -n 3000 src/build_full.log > build_fail_latest.log
+          else
+            echo "警告：src/build_full.log 不存在，说明失败发生在编译步骤之前（run $GITHUB_RUN_ID）" > build_fail_latest.log
+            echo "失败步骤信息见 GitHub Actions 页面。" >> build_fail_latest.log
+          fi
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
-          git add -A build_fail_latest.log "build_fail_${GITHUB_RUN_ID}.log" 2>/dev/null || git add -A build_fail_latest.log
-          git commit -m "ci: build failure log (run $GITHUB_RUN_ID)"
+          git add -f build_fail_latest.log
+          git commit -m "ci: build failure log (run $GITHUB_RUN_ID)" || echo "commit 跳过（无变更）"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:master && echo "PUSH_OK"
           echo "日志地址: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/master/build_fail_latest.log"
 
