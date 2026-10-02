@@ -8,9 +8,11 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+    paths:
+      - '.github/workflows/**'
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
@@ -75,6 +77,19 @@ jobs:
             https://api.github.com/repos/${GITHUB_REPOSITORY}/issues -d @payload.json)
           echo "issue POST HTTP=$HTTP"
           grep -o '"html_url": *"[^"]*issues/[^"]*"' /tmp/resp.json || cat /tmp/resp.json
+
+      - name: 失败时把日志 commit 进仓库（raw 公开可读，远程排错）
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tail -n 3000 src/build_full.log > build_fail_log.txt
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add build_fail_log.txt
+          git commit -m "ci: build failure log (run $GITHUB_RUN_ID)"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:master && echo "PUSH_OK"
+          echo "日志地址: https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/master/build_fail_log.txt"
 
       - name: 失败时上传完整编译日志（artifact 兜底）
         if: failure()
