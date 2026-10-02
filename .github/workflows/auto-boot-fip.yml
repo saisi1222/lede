@@ -1,0 +1,68 @@
+# 自动编译"上电直接启动"的 FUR-602 multi-layout FIP
+# 用法：新建一个空 GitHub 仓库 → 把本文件放到 .github/workflows/auto-boot-fip.yml
+#       → Actions 页手动 Run workflow → 等约 10~15 分钟 → 下载 artifact
+# 无需本地编译（4G 老机也不怕），无需 fork 原仓库，全自动 clone+改配置+编译+上传
+name: AutoBoot-FIP-builder
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出本仓库（仅放 workflow）
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl
+          # 用原仓库自带的依赖清单，避免漏包
+          echo "依赖将在 clone 后按需安装"
+
+      - name: 克隆源码 (TimouL/bl-mt798x-dhcpd)
+        run: |
+          git clone https://github.com/TimouL/bl-mt798x-dhcpd -b master src
+          cd src
+          sudo apt-get update
+          sudo apt-get install -y $(cat depends/ubuntu-22.04)
+
+      - name: 打补丁：关掉 bootmenu/web 拦截，上电自动启动
+        run: |
+          cd src
+          DEF=$(find . -path '*/configs/mt7981_honor_fur-602_multi_layout_defconfig' | head -1)
+          test -n "$DEF" -a -f "$DEF" || { echo "defconfig 未找到！"; exit 1; }
+          sed -i 's/^CONFIG_MEDIATEK_BOOTMENU=y/# CONFIG_MEDIATEK_BOOTMENU is not set/' "$DEF"
+          sed -i '/^CONFIG_MEDIATEK_BOOTMENU_DELAY=3/d' "$DEF"
+          sed -i 's/^CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE=y/# CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE is not set/' "$DEF"
+          sed -i 's/^CONFIG_AUTOBOOT_MENU_SHOW=y/# CONFIG_AUTOBOOT_MENU_SHOW is not set/' "$DEF"
+          sed -i 's/^CONFIG_AUTOBOOT_MENU_MTK_SHOW=y/# CONFIG_AUTOBOOT_MENU_MTK_SHOW is not set/' "$DEF"
+          grep -q '^CONFIG_BOOTDELAY=' "$DEF" || echo 'CONFIG_BOOTDELAY=0' >> "$DEF"
+          # 启用内置 DHCP server：进 web 恢复时自动给电脑分配 IP，免手动设 192.168.1.*
+          grep -q '^CONFIG_MTK_DHCPD=y' "$DEF" || echo 'CONFIG_MTK_DHCPD=y' >> "$DEF"
+          echo "=== 补丁后关键行 ==="
+          grep -E 'BOOTMENU|AUTOBOOT|WEB_FAILSAFE|BOOTDELAY|DHCPD' "$DEF"
+
+      - name: 编译 multi-layout FIP (mt7981 / honor_fur-602 / 2025)
+        run: |
+          cd src
+          chmod +x ./build.sh
+          SOC=mt7981 BOARD=honor_fur-602 VERSION=2025 MULTI_LAYOUT=1 ./build.sh
+
+      - name: 列出产物
+        run: |
+          cd src
+          ls -la output/ 2>/dev/null || { echo "output 目录为空，编译可能失败"; exit 1; }
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: honor_fur-602-autoboot-fip
+          path: src/output/*.bin
+          if-no-files-found: error
