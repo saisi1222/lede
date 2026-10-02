@@ -65,8 +65,8 @@ jobs:
           # ★★★ 关键修复：mtd_layout 默认值必须是 64m，不能是 114m ★★★
           # 背景：Padavan 把 u-boot-env(mtd1) 当 NVRAM 覆盖 → uboot 读不到 mtd_layout_label
           #      → mtd_layout.c 回退默认值。源码原本默认 "expand(114m)"(116736k ubi)，
-      #      但本机 Padavan 实际是 64m 布局(真机 /proc/mtd: mtd5 ubi=64MB)。
-      #      布局选错会导致 mtkboardboot 找不到 ubi / 刷写写错分区。
+          #      但本机 Padavan 实际是 64m 布局(真机 /proc/mtd: mtd5 ubi=64MB)。
+          #      布局选错会导致 mtkboardboot 找不到 ubi / 刷写写错分区。
           LAYOUT_C=uboot-mtk-20230718-09eda825/board/mediatek/common/mtd_layout.c
           DTS=uboot-mtk-20230718-09eda825/arch/arm/dts/mt7981-honor_fur-602.dts
           # 1) 改 C 源码默认值：expand(114m) → default(64m)
