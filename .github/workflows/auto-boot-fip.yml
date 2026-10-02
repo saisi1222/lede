@@ -43,12 +43,18 @@ jobs:
           # fur-602 的 ATF 配置只存在于 2022/2024 目录，2025 没有 → 用 2024
           DEF=uboot-mtk-20230718-09eda825/configs/mt7981_honor_fur-602_multi_layout_defconfig
           test -f "$DEF" || { echo "defconfig 未找到！"; exit 1; }
-          sed -i 's/^CONFIG_MEDIATEK_BOOTMENU=y/# CONFIG_MEDIATEK_BOOTMENU is not set/' "$DEF"
-          sed -i '/^CONFIG_MEDIATEK_BOOTMENU_DELAY=3/d' "$DEF"
-          sed -i 's/^CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE=y/# CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE is not set/' "$DEF"
+          # ⚠️ 关键：绝不能关 CONFIG_MEDIATEK_BOOTMENU！
+          # board/mediatek/common/Makefile 里 failsafe.o(web救援) / cmd_mtkupgrade.o(网页刷固件)
+          # / mtd_helper.o 全挂在 CONFIG_MEDIATEK_BOOTMENU 之下，关掉它 = 失去唯一救砖通道。
+          # 治开机 bug 只关"交互菜单显示"+ 零等待，让 uboot 直接执行 DTS 里的 bootcmd=mtkboardboot。
+          grep -q '^CONFIG_MEDIATEK_BOOTMENU=y' "$DEF" || sed -i 's/^# CONFIG_MEDIATEK_BOOTMENU is not set/CONFIG_MEDIATEK_BOOTMENU=y/' "$DEF"
+          grep -q '^CONFIG_MTK_WEB_FAILSAFE=y' "$DEF" || echo 'CONFIG_MTK_WEB_FAILSAFE=y' >> "$DEF"
+          grep -q '^CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE=y' "$DEF" || echo 'CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE=y' >> "$DEF"
+          # 不显示 bootmenu 交互界面（避免上电停住等按键）
           sed -i 's/^CONFIG_AUTOBOOT_MENU_SHOW=y/# CONFIG_AUTOBOOT_MENU_SHOW is not set/' "$DEF"
           sed -i 's/^CONFIG_AUTOBOOT_MENU_MTK_SHOW=y/# CONFIG_AUTOBOOT_MENU_MTK_SHOW is not set/' "$DEF"
-          grep -q '^CONFIG_BOOTDELAY=' "$DEF" || echo 'CONFIG_BOOTDELAY=0' >> "$DEF"
+          # 启动延时归零，上电立刻执行 bootcmd
+          grep -q '^CONFIG_BOOTDELAY=' "$DEF" && sed -i 's/^CONFIG_BOOTDELAY=.*/CONFIG_BOOTDELAY=0/' "$DEF" || echo 'CONFIG_BOOTDELAY=0' >> "$DEF"
           # 启用内置 DHCP server：进 web 恢复时自动给电脑分配 IP，免手动设 192.168.1.*
           grep -q '^CONFIG_MTK_DHCPD=y' "$DEF" || echo 'CONFIG_MTK_DHCPD=y' >> "$DEF"
           # 修复 TimouL fur-602 defconfig 缺失：不开 MTD 核心 → mtdcore.o/mtd_uboot.o/mtdpart.o 不编译
@@ -64,6 +70,30 @@ jobs:
           chmod +x ./build.sh
           set -o pipefail
           SOC=mt7981 BOARD=honor_fur-602 VERSION=2024 MULTI_LAYOUT=1 ./build.sh 2>&1 | tee build_full.log
+
+      - name: 质检：产物必须含 web 救援特征串（否则不许刷）
+        run: |
+          cd src
+          FIP=$(ls output/*fip*.bin | head -1)
+          echo "检查: $FIP"
+          echo "=== 特征串统计（web 救援必须 >0）==="
+          for s in "HTTP/1" "Content-Type" "uboot.html" "mtkboardboot" "U-Boot 20"; do
+            printf "%-16s: %s\n" "$s" "$(grep -ac "$s" "$FIP" || true)"
+          done
+          FAIL=0
+          for s in "HTTP/1" "uboot.html" "mtkboardboot"; do
+            grep -aq "$s" "$FIP" || { echo "❌ 缺少 $s —— web 救援/自动启动不可用，产物不安全"; FAIL=1; }
+          done
+          # 自动启动验证：bootmenu 交互界面应已关闭
+          if grep -aq "mtkautoboot" "$FIP"; then
+            echo "⚠️ 仍含 mtkautoboot 交互菜单串（可能仍会上电停住）"
+          else
+            echo "✅ mtkautoboot 菜单串已消失（不会上电停住等按键）"
+          fi
+          echo "=== 产物信息 ==="
+          ls -la "$FIP"
+          md5sum "$FIP"
+          exit $FAIL
 
       - name: 失败时把日志尾部发到 issue（远程排错用）
         if: failure()
