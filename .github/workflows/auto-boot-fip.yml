@@ -61,17 +61,28 @@ jobs:
 
       - name: 失败时把日志尾部发到 issue（远程排错用）
         if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           {
             echo "自动编译失败。Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo ""
             tail -n 300 src/build_full.log
           } | jq -Rs "{title: \"FIP build fail log run=${GITHUB_RUN_ID}\", body: .}" > payload.json
-          curl -s -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
+          HTTP=$(curl -s -o /tmp/resp.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${GITHUB_REPOSITORY}/issues -d @payload.json \
-            | grep -o '"html_url": "[^"]*issues/[^"]*"' || true
+            https://api.github.com/repos/${GITHUB_REPOSITORY}/issues -d @payload.json)
+          echo "issue POST HTTP=$HTTP"
+          grep -o '"html_url": *"[^"]*issues/[^"]*"' /tmp/resp.json || cat /tmp/resp.json
+
+      - name: 失败时上传完整编译日志（artifact 兜底）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-fail-log
+          path: src/build_full.log
+          if-no-files-found: ignore
 
       - name: 列出产物
         run: |
