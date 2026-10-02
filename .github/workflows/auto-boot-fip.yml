@@ -36,8 +36,9 @@ jobs:
       - name: 打补丁：关掉 bootmenu/web 拦截，上电自动启动
         run: |
           cd src
-          DEF=$(find . -path '*/configs/mt7981_honor_fur-602_multi_layout_defconfig' | head -1)
-          test -n "$DEF" -a -f "$DEF" || { echo "defconfig 未找到！"; exit 1; }
+          # fur-602 的 ATF 配置只存在于 2022/2024 目录，2025 没有 → 用 2024
+          DEF=uboot-mtk-20230718-09eda825/configs/mt7981_honor_fur-602_multi_layout_defconfig
+          test -f "$DEF" || { echo "defconfig 未找到！"; exit 1; }
           sed -i 's/^CONFIG_MEDIATEK_BOOTMENU=y/# CONFIG_MEDIATEK_BOOTMENU is not set/' "$DEF"
           sed -i '/^CONFIG_MEDIATEK_BOOTMENU_DELAY=3/d' "$DEF"
           sed -i 's/^CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE=y/# CONFIG_MTK_WEB_FAILSAFE_AFTER_BOOT_FAILURE is not set/' "$DEF"
@@ -49,11 +50,11 @@ jobs:
           echo "=== 补丁后关键行 ==="
           grep -E 'BOOTMENU|AUTOBOOT|WEB_FAILSAFE|BOOTDELAY|DHCPD' "$DEF"
 
-      - name: 编译 multi-layout FIP (mt7981 / honor_fur-602 / 2025)
+      - name: 编译 multi-layout FIP (mt7981 / honor_fur-602 / 2024)
         run: |
           cd src
           chmod +x ./build.sh
-          SOC=mt7981 BOARD=honor_fur-602 VERSION=2025 MULTI_LAYOUT=1 ./build.sh
+          SOC=mt7981 BOARD=honor_fur-602 VERSION=2024 MULTI_LAYOUT=1 ./build.sh
 
       - name: 列出产物
         run: |
