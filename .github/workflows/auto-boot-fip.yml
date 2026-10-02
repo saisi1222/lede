@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   build:
@@ -31,7 +32,8 @@ jobs:
           git clone https://github.com/TimouL/bl-mt798x-dhcpd -b master src
           cd src
           sudo apt-get update
-          sudo apt-get install -y $(cat depends/ubuntu-22.04)
+          # depends 清单 + MTK u-boot 常见缺失的 host 依赖（bc/swig/gnutls/uuid 编 tools 必需）
+          sudo apt-get install -y $(cat depends/ubuntu-22.04) bc swig libgnutls28-dev uuid-dev
 
       - name: 打补丁：关掉 bootmenu/web 拦截，上电自动启动
         run: |
@@ -54,7 +56,22 @@ jobs:
         run: |
           cd src
           chmod +x ./build.sh
-          SOC=mt7981 BOARD=honor_fur-602 VERSION=2024 MULTI_LAYOUT=1 ./build.sh
+          set -o pipefail
+          SOC=mt7981 BOARD=honor_fur-602 VERSION=2024 MULTI_LAYOUT=1 ./build.sh 2>&1 | tee build_full.log
+
+      - name: 失败时把日志尾部发到 issue（远程排错用）
+        if: failure()
+        run: |
+          {
+            echo "自动编译失败。Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            tail -n 300 src/build_full.log
+          } | jq -Rs "{title: \"FIP build fail log run=${GITHUB_RUN_ID}\", body: .}" > payload.json
+          curl -s -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${GITHUB_REPOSITORY}/issues -d @payload.json \
+            | grep -o '"html_url": "[^"]*issues/[^"]*"' || true
 
       - name: 列出产物
         run: |
