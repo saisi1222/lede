@@ -74,14 +74,34 @@ jobs:
           echo "=== 校验布局改动（默认值应为 default=64m 布局）==="
           grep -n 'layout_label = "' "$LAYOUT_C"
           echo "=== 补丁后关键行 ==="
-          grep -E 'BOOTMENU|AUTOBOOT|WEB_FAILSAFE|BOOTDELAY|DHCPD' "$DEF"
+          grep -E 'BOOTMENU|AUTOBOOT|WEB_FAILSAFE|BOOTDELAY|DHCPD|CONFIG_MTD' "$DEF"
 
       - name: 编译 multi-layout FIP (mt7981 / honor_fur-602 / 2024)
         run: |
           cd src
           chmod +x ./build.sh
           set -o pipefail
+          # ⚠️ 关键：build.sh 内部会跑 make olddefconfig，而 CONFIG_MTD 会被 Kconfig 判成 n
+          #    （SYS_MTDPARTS_RUNTIME 隐含 select MTD，形成循环 → olddefconfig 把 MTD 降级）
+          #    症状：mtdcore.o/mtd_uboot.o 不编译 → 链接时几十个 mtd_* undefined + ld 段错误(Error 139)
+          #    对策：先手工跑一遍 olddefconfig，强制把 MTD 写进 .config，再让 build.sh 继续
+          cd uboot-mtk-20230718-09eda825
+          cp -f configs/mt7981_honor_fur-602_multi_layout_defconfig .config
+          make olddefconfig 2>&1 | tail -3
+          echo "=== 强制注入 MTD 核心 ==="
+          sed -i '/^# CONFIG_MTD is not set/d; /^CONFIG_MTD=y/d' .config
+          echo 'CONFIG_MTD=y' >> .config
+          sed -i '/^# CONFIG_MTD_PARTITIONS is not set/d; /^CONFIG_MTD_PARTITIONS=y/d' .config
+          echo 'CONFIG_MTD_PARTITIONS=y' >> .config
+          make olddefconfig 2>&1 | tail -3
+          echo "=== 校验 .config（MTD 必须为 y）==="
+          grep -E '^CONFIG_MTD=|^CONFIG_MTD_PARTITIONS=|^CONFIG_SYS_MTDPARTS_RUNTIME=' .config
+          grep -q '^CONFIG_MTD=y' .config || { echo "❌ CONFIG_MTD 仍是 n，编译必然失败"; exit 1; }
+          echo "✅ CONFIG_MTD=y 已生效"
+          cd ..
           SOC=mt7981 BOARD=honor_fur-602 VERSION=2024 MULTI_LAYOUT=1 ./build.sh 2>&1 | tee build_full.log
+          echo "=== 编译后再次确认 .config 仍为 y ==="
+          grep -E '^CONFIG_MTD=' uboot-mtk-20230718-09eda825/.config || true
 
       - name: 质检：产物必须含 web 救援特征串（否则不许刷）
         run: |
