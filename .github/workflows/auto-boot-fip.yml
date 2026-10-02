@@ -80,36 +80,17 @@ jobs:
           # SYS_MTDPARTS_RUNTIME → depends on MTD）把 CONFIG_MTD 判成 n。
           # 症状：mtdcore.o/mtd_uboot.o/mtdpart.o 不编译 → 链接时几十个 mtd_* undefined + ld 段错误(139)
           # 对策：在 build.sh 的 olddefconfig 之后、make all 之前，强制把 CONFIG_MTD 写进 .config
-          python3 - <<'PYEOF'
-          import re
-          p='build.sh'
-          s=open(p).read()
-          inject='''
-	# === force MTD core (fix fur-602 defconfig missing -> link failure) ===
-	sed -i "/^# CONFIG_MTD is not set/d; /^CONFIG_MTD=y/d; /^CONFIG_MTD_PARTITIONS=y/d" "$UBOOT_DIR/.config"
-	echo "CONFIG_MTD=y" >> "$UBOOT_DIR/.config"
-	echo "CONFIG_MTD_PARTITIONS=y" >> "$UBOOT_DIR/.config"
-	make -C "$UBOOT_DIR" olddefconfig
-	echo "--- MTD config after injection ---"
-	grep -E "^CONFIG_MTD=|^CONFIG_MTD_PARTITIONS=" "$UBOOT_DIR/.config" || true
-	grep -q "^CONFIG_MTD=y" "$UBOOT_DIR/.config" || { echo "ERROR: CONFIG_MTD injection failed"; exit 1; }
-'''
-          if 'force MTD core' in s:
-              print('already patched')
-          else:
-              lines=s.split('\n')
-              out=[]
-              done=False
-              for ln in lines:
-                  out.append(ln)
-                  if not done and ln.strip()=='make -C "$UBOOT_DIR" olddefconfig':
-                      out.append(inject.rstrip('\n'))
-                      done=True
-              if not done:
-                  print('ERROR: anchor line not found!'); raise SystemExit(1)
-              open(p,'w').write('\n'.join(out))
-              print('patched build.sh OK')
-          PYEOF
+          # ★★★ 关键：给 build.sh 打补丁，强制启用 MTD 核心 ★★★
+          # build.sh:75 `cp -f configs/$UBOOT_CFG .config` 覆盖外部注入；
+          # build.sh:81 `make olddefconfig` 因 Kconfig 循环（MULTI_MTD_LAYOUT → select
+          # SYS_MTDPARTS_RUNTIME → depends on MTD）把 CONFIG_MTD 判成 n。
+          # 症状：mtdcore.o/mtd_uboot.o 不编译 → 链接时几十个 mtd_* undefined + ld 段错误(139)
+          # 补丁脚本独立成文件（YAML 内嵌 heredoc 缩进极易出错），本地已 sh -n 校验通过。
+          cp -f .github/patch_build_sh.py ./patch_build_sh.py
+          python3 ./patch_build_sh.py
+          echo "=== build.sh MTD 注入补丁已应用（确认）==="
+          grep -n -A6 "force MTD core" build.sh
+          sh -n build.sh && echo "build.sh 语法校验通过"
           echo "=== build.sh MTD 注入补丁已应用（确认）==="
           grep -n -A6 "force MTD core" build.sh
           echo "=== 补丁后关键行 ==="
