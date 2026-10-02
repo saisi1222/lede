@@ -51,6 +51,10 @@ jobs:
           grep -q '^CONFIG_BOOTDELAY=' "$DEF" || echo 'CONFIG_BOOTDELAY=0' >> "$DEF"
           # 启用内置 DHCP server：进 web 恢复时自动给电脑分配 IP，免手动设 192.168.1.*
           grep -q '^CONFIG_MTK_DHCPD=y' "$DEF" || echo 'CONFIG_MTK_DHCPD=y' >> "$DEF"
+          # 修复 TimouL fur-602 defconfig 缺失：不开 MTD 核心 → mtdcore.o/mtd_uboot.o/mtdpart.o 不编译
+          # → 链接时 mtd_probe_devices/mtd_read_oob 等全部 undefined，ld 直接段错误 (Error 139)
+          grep -q '^CONFIG_MTD=y' "$DEF" || echo 'CONFIG_MTD=y' >> "$DEF"
+          grep -q '^CONFIG_MTD_PARTITIONS=y' "$DEF" || echo 'CONFIG_MTD_PARTITIONS=y' >> "$DEF"
           echo "=== 补丁后关键行 ==="
           grep -E 'BOOTMENU|AUTOBOOT|WEB_FAILSAFE|BOOTDELAY|DHCPD' "$DEF"
 
