@@ -61,6 +61,18 @@ jobs:
           # → 链接时 mtd_probe_devices/mtd_read_oob 等全部 undefined，ld 直接段错误 (Error 139)
           grep -q '^CONFIG_MTD=y' "$DEF" || echo 'CONFIG_MTD=y' >> "$DEF"
           grep -q '^CONFIG_MTD_PARTITIONS=y' "$DEF" || echo 'CONFIG_MTD_PARTITIONS=y' >> "$DEF"
+
+          # ★★★ 关键修复：mtd_layout 默认值必须是 64m，不能是 114m ★★★
+          # 背景：Padavan 把 u-boot-env(mtd1) 当 NVRAM 覆盖 → uboot 读不到 mtd_layout_label
+          #      → mtd_layout.c 回退默认值。源码原本默认 "expand(114m)"(116736k ubi)，
+      #      但本机 Padavan 实际是 64m 布局(真机 /proc/mtd: mtd5 ubi=64MB)。
+      #      布局选错会导致 mtkboardboot 找不到 ubi / 刷写写错分区。
+          LAYOUT_C=uboot-mtk-20230718-09eda825/board/mediatek/common/mtd_layout.c
+          DTS=uboot-mtk-20230718-09eda825/arch/arm/dts/mt7981-honor_fur-602.dts
+          # 1) 改 C 源码默认值：expand(114m) → default(64m)
+          sed -i 's/layout_label = "expand(114m)";/layout_label = "default";/' "$LAYOUT_C"
+          echo "=== 校验布局改动（默认值应为 default=64m 布局）==="
+          grep -n 'layout_label = "' "$LAYOUT_C"
           echo "=== 补丁后关键行 ==="
           grep -E 'BOOTMENU|AUTOBOOT|WEB_FAILSAFE|BOOTDELAY|DHCPD' "$DEF"
 
@@ -84,6 +96,10 @@ jobs:
           for s in "HTTP/1" "uboot.html" "mtkboardboot"; do
             grep -aq "$s" "$FIP" || { echo "❌ 缺少 $s —— web 救援/自动启动不可用，产物不安全"; FAIL=1; }
           done
+          # 布局校验：产物必须含 64m 布局标记(65536k ubi)，且 114m 布局字符串应仍存在（保留刷大固件能力）
+          printf "%-18s: %s\n" "64m(65536k)布局" "$(grep -ac '65536k' "$FIP" || true)"
+          printf "%-18s: %s\n" "114m(116736k)布局" "$(grep -ac '116736k' "$FIP" || true)"
+          grep -aq '65536k' "$FIP" || { echo "❌ 缺 64m 布局定义，本机 Padavan 无法正确启动"; FAIL=1; }
           # 自动启动验证：bootmenu 交互界面应已关闭
           if grep -aq "mtkautoboot" "$FIP"; then
             echo "⚠️ 仍含 mtkautoboot 交互菜单串（可能仍会上电停住）"
